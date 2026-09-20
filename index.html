@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Media Downloader</title>
+<title>MediaDrop</title>
 
 <style>
 * {
@@ -62,36 +62,44 @@ button:active {
   gap: 8px;
 }
 
-.format {
+.section-title {
+  margin-top: 18px;
+  margin-bottom: 6px;
+  font-size: 16px;
+  font-weight: bold;
+}
+
+.choice {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  justify-content: space-between;
   gap: 10px;
-  padding: 10px;
+  padding: 11px;
   margin: 6px 0;
   background: #1a1a1a;
   border: 1px solid #333;
   border-radius: 8px;
 }
 
-.format-info {
+.choice-info {
   min-width: 0;
 }
 
-.format-name {
+.choice-name {
   font-weight: bold;
 }
 
-.format-details {
-  color: #aaa;
+.choice-details {
+  color: #999;
   font-size: 12px;
   margin-top: 3px;
 }
 
-.format button {
+.choice button {
   width: auto;
-  min-width: 80px;
+  min-width: 85px;
   margin: 0;
+  flex-shrink: 0;
 }
 
 .hidden {
@@ -104,7 +112,7 @@ button:active {
 
 <div class="container">
 
-<h1>Media Downloader</h1>
+<h1>MediaDrop</h1>
 
 <input
   id="url"
@@ -120,16 +128,16 @@ button:active {
 <div id="controls" class="hidden">
 
   <div class="filters">
-    <select id="typeFilter" onchange="filterFormats()">
-      <option value="all">All types</option>
-      <option value="video">Video</option>
-      <option value="audio">Audio</option>
+    <select id="typeFilter" onchange="renderCleanFormats()">
+      <option value="all">Video + Audio</option>
+      <option value="video">Video only</option>
+      <option value="audio">Audio only</option>
     </select>
 
-    <select id="qualityFilter" onchange="filterFormats()">
+    <select id="qualityFilter" onchange="renderCleanFormats()">
       <option value="all">All quality</option>
-      <option value="2160">4K</option>
-      <option value="1440">2K</option>
+      <option value="2160">2160p / 4K</option>
+      <option value="1440">1440p / 2K</option>
       <option value="1080">1080p</option>
       <option value="720">720p</option>
       <option value="480">480p</option>
@@ -147,14 +155,347 @@ button:active {
 const API_PROXY =
   "https://royal-thunder-6999.ipandanial2011.workers.dev";
 
-let allFormats = [];
+let rawFormats = [];
+let cleanFormats = [];
+
 
 function setStatus(text) {
   document.getElementById("status").textContent = text;
 }
 
+
+/*
+  Try to get a useful numeric height from
+  whatever field the downloader API gives us.
+*/
+function getHeight(format) {
+
+  if (format.height) {
+    return Number(format.height);
+  }
+
+  if (format.resolution) {
+    const match =
+      String(format.resolution).match(/(\d{3,4})p?/i);
+
+    if (match) {
+      return Number(match[1]);
+    }
+  }
+
+  if (format.quality) {
+    const match =
+      String(format.quality).match(/(\d{3,4})p?/i);
+
+    if (match) {
+      return Number(match[1]);
+    }
+  }
+
+  if (format.format_note) {
+    const match =
+      String(format.format_note).match(/(\d{3,4})p/i);
+
+    if (match) {
+      return Number(match[1]);
+    }
+  }
+
+  return 0;
+}
+
+
+function getExtension(format) {
+  return String(
+    format.ext ||
+    format.extension ||
+    ""
+  ).toLowerCase();
+}
+
+
+function isAudio(format) {
+
+  const text =
+    JSON.stringify(format).toLowerCase();
+
+  const ext = getExtension(format);
+
+  if (
+    ext === "mp3" ||
+    ext === "flac" ||
+    ext === "wav" ||
+    ext === "m4a" ||
+    ext === "aac" ||
+    ext === "opus" ||
+    ext === "ogg"
+  ) {
+    return true;
+  }
+
+  if (
+    format.acodec &&
+    format.vcodec &&
+    format.vcodec !== "none"
+  ) {
+    return false;
+  }
+
+  return (
+    format.vcodec === "none" ||
+    text.includes("audio only") ||
+    text.includes("audio")
+  );
+}
+
+
+function isVideo(format) {
+
+  if (format.vcodec && format.vcodec !== "none") {
+    return true;
+  }
+
+  const height = getHeight(format);
+
+  return height > 0 && !isAudio(format);
+}
+
+
+function getBitrate(format) {
+
+  const value =
+    format.tbr ||
+    format.abr ||
+    format.bitrate ||
+    format.audio_bitrate;
+
+  if (!value) return "";
+
+  const number = Number(value);
+
+  if (!Number.isFinite(number)) {
+    return "";
+  }
+
+  return Math.round(number) + " kbps";
+}
+
+
+function getVideoLabel(format) {
+
+  const height = getHeight(format);
+
+  if (height >= 2160) return "2160p";
+  if (height >= 1440) return "1440p";
+  if (height >= 1080) return "1080p";
+  if (height >= 720) return "720p";
+  if (height >= 480) return "480p";
+  if (height >= 360) return "360p";
+
+  return height ? height + "p" : "Video";
+}
+
+
+function getAudioLabel(format) {
+
+  const ext = getExtension(format);
+  const bitrate = getBitrate(format);
+
+  if (ext === "flac") {
+    return "FLAC";
+  }
+
+  if (ext === "mp3") {
+    return bitrate
+      ? "MP3 " + bitrate
+      : "MP3";
+  }
+
+  if (ext === "wav") {
+    return "WAV";
+  }
+
+  if (ext === "aac") {
+    return bitrate
+      ? "AAC " + bitrate
+      : "AAC";
+  }
+
+  if (ext === "m4a") {
+    return bitrate
+      ? "M4A " + bitrate
+      : "M4A";
+  }
+
+  if (ext === "opus") {
+    return bitrate
+      ? "Opus " + bitrate
+      : "Opus";
+  }
+
+  if (ext === "ogg") {
+    return bitrate
+      ? "OGG " + bitrate
+      : "OGG";
+  }
+
+  return "Audio";
+}
+
+
+/*
+  Convert the messy API response into
+  simple choices while keeping the original
+  format object hidden inside each choice.
+*/
+function buildCleanFormats() {
+
+  const choices = [];
+
+  rawFormats.forEach(format => {
+
+    const formatId =
+      format.format_id ||
+      format.id ||
+      format.format;
+
+    if (!formatId) return;
+
+    if (isVideo(format)) {
+
+      const height = getHeight(format);
+
+      if (!height) return;
+
+      choices.push({
+        type: "video",
+        label: getVideoLabel(format),
+        height,
+        ext: getExtension(format) || "video",
+        format
+      });
+
+    } else if (isAudio(format)) {
+
+      choices.push({
+        type: "audio",
+        label: getAudioLabel(format),
+        height: 0,
+        ext: getExtension(format) || "audio",
+        format
+      });
+    }
+  });
+
+
+  /*
+    Remove duplicate video choices.
+    If multiple formats have the same resolution,
+    prefer MP4 and then prefer the higher bitrate.
+  */
+  const videos = {};
+
+  choices
+    .filter(x => x.type === "video")
+    .forEach(choice => {
+
+      const key = choice.height;
+
+      if (!videos[key]) {
+        videos[key] = choice;
+        return;
+      }
+
+      const current =
+        videos[key].format;
+
+      const currentExt =
+        getExtension(current);
+
+      const newExt =
+        getExtension(choice.format);
+
+      if (
+        newExt === "mp4" &&
+        currentExt !== "mp4"
+      ) {
+        videos[key] = choice;
+        return;
+      }
+
+      const currentRate =
+        Number(current.tbr || 0);
+
+      const newRate =
+        Number(choice.format.tbr || 0);
+
+      if (newRate > currentRate) {
+        videos[key] = choice;
+      }
+    });
+
+
+  /*
+    Remove duplicate audio extensions.
+    Keep the highest bitrate for each extension.
+  */
+  const audios = {};
+
+  choices
+    .filter(x => x.type === "audio")
+    .forEach(choice => {
+
+      const key = choice.ext;
+
+      if (!audios[key]) {
+        audios[key] = choice;
+        return;
+      }
+
+      const oldRate =
+        Number(
+          audios[key].format.abr ||
+          audios[key].format.tbr ||
+          0
+        );
+
+      const newRate =
+        Number(
+          choice.format.abr ||
+          choice.format.tbr ||
+          0
+        );
+
+      if (newRate > oldRate) {
+        audios[key] = choice;
+      }
+    });
+
+
+  cleanFormats = [
+    ...Object.values(videos),
+    ...Object.values(audios)
+  ];
+
+  cleanFormats.sort((a, b) => {
+
+    if (a.type !== b.type) {
+      return a.type === "video" ? -1 : 1;
+    }
+
+    if (a.type === "video") {
+      return b.height - a.height;
+    }
+
+    return a.label.localeCompare(b.label);
+  });
+}
+
+
 async function getFormats() {
-  const videoUrl = document.getElementById("url").value.trim();
+
+  const videoUrl =
+    document.getElementById("url").value.trim();
 
   if (!videoUrl) {
     setStatus("Paste a URL first.");
@@ -162,10 +503,15 @@ async function getFormats() {
   }
 
   setStatus("Getting available formats...");
-  document.getElementById("controls").classList.add("hidden");
+
+  document
+    .getElementById("controls")
+    .classList.add("hidden");
+
   document.getElementById("formats").innerHTML = "";
 
   try {
+
     const response = await fetch(
       API_PROXY +
       "/formats?video_url=" +
@@ -176,148 +522,212 @@ async function getFormats() {
 
     if (!response.ok) {
       throw new Error(
-        data.error || "Failed to get formats."
+        data.error ||
+        "Failed to get formats."
       );
     }
 
-    allFormats = data.formats || data;
+    rawFormats =
+      data.formats ||
+      data.results ||
+      data;
 
-    if (!Array.isArray(allFormats)) {
-      throw new Error("Unexpected format response.");
+    if (!Array.isArray(rawFormats)) {
+      throw new Error(
+        "Unexpected format response."
+      );
     }
 
-    if (allFormats.length === 0) {
-      setStatus("No downloadable formats found.");
-      return;
+    buildCleanFormats();
+
+    if (!cleanFormats.length) {
+      throw new Error(
+        "No recognizable formats were returned."
+      );
     }
 
-    document.getElementById("controls").classList.remove("hidden");
+    document
+      .getElementById("controls")
+      .classList.remove("hidden");
+
+    renderCleanFormats();
 
     setStatus(
-      "Found " + allFormats.length + " format(s)."
+      "Found " +
+      cleanFormats.length +
+      " clean format choices."
     );
 
-    renderFormats(allFormats);
-
   } catch (error) {
+
     setStatus(
       "Could not get formats:\n" +
-      (error.message || "Failed to fetch.")
+      (error.message ||
+      "Failed to fetch.")
     );
   }
 }
 
-function filterFormats() {
+
+function renderCleanFormats() {
+
+  const container =
+    document.getElementById("formats");
+
+  container.innerHTML = "";
+
   const type =
     document.getElementById("typeFilter").value;
 
   const quality =
     document.getElementById("qualityFilter").value;
 
-  let filtered = allFormats.filter(format => {
 
-    const text = JSON.stringify(format).toLowerCase();
+  const filtered =
+    cleanFormats.filter(choice => {
 
-    let typeOK = true;
-    let qualityOK = true;
+      if (
+        type !== "all" &&
+        choice.type !== type
+      ) {
+        return false;
+      }
 
-    if (type === "video") {
-      typeOK =
-        text.includes("video") ||
-        text.includes("mp4") ||
-        text.includes("webm");
-    }
+      if (
+        quality !== "all" &&
+        choice.type === "video"
+      ) {
+        return choice.height ===
+          Number(quality);
+      }
 
-    if (type === "audio") {
-      typeOK =
-        text.includes("audio") ||
-        text.includes("mp3") ||
-        text.includes("flac") ||
-        text.includes("m4a") ||
-        text.includes("aac") ||
-        text.includes("wav");
-    }
+      return true;
+    });
 
-    if (quality !== "all") {
-      qualityOK =
-        text.includes(quality + "p") ||
-        text.includes(quality);
-    }
 
-    return typeOK && qualityOK;
-  });
+  const videos =
+    filtered.filter(
+      choice => choice.type === "video"
+    );
 
-  renderFormats(filtered);
+  const audios =
+    filtered.filter(
+      choice => choice.type === "audio"
+    );
+
+
+  if (videos.length) {
+
+    const title =
+      document.createElement("div");
+
+    title.className = "section-title";
+    title.textContent = "Video";
+
+    container.appendChild(title);
+
+    videos.forEach(renderChoice);
+  }
+
+
+  if (audios.length) {
+
+    const title =
+      document.createElement("div");
+
+    title.className = "section-title";
+    title.textContent = "Audio";
+
+    container.appendChild(title);
+
+    audios.forEach(renderChoice);
+  }
+
+
+  if (!filtered.length) {
+
+    container.innerHTML =
+      "<p>No matching formats.</p>";
+  }
 }
 
-function renderFormats(formats) {
+
+function renderChoice(choice) {
+
   const container =
     document.getElementById("formats");
 
-  container.innerHTML = "";
+  const div =
+    document.createElement("div");
 
-  if (!formats.length) {
-    container.innerHTML =
-      "<p>No matching formats.</p>";
-    return;
+  div.className = "choice";
+
+
+  const info =
+    document.createElement("div");
+
+  info.className = "choice-info";
+
+
+  const name =
+    document.createElement("div");
+
+  name.className = "choice-name";
+  name.textContent = choice.label;
+
+
+  const details =
+    document.createElement("div");
+
+  details.className = "choice-details";
+
+  const parts = [];
+
+  if (choice.ext) {
+    parts.push(
+      choice.ext.toUpperCase()
+    );
   }
 
-  formats.forEach((format, index) => {
+  const bitrate =
+    getBitrate(choice.format);
 
-    const div = document.createElement("div");
-    div.className = "format";
+  if (bitrate) {
+    parts.push(bitrate);
+  }
 
-    const info = document.createElement("div");
-    info.className = "format-info";
+  if (
+    choice.format.fps &&
+    choice.type === "video"
+  ) {
+    parts.push(
+      choice.format.fps + " FPS"
+    );
+  }
 
-    const name = document.createElement("div");
-    name.className = "format-name";
+  details.textContent =
+    parts.join(" • ");
 
-    const details = document.createElement("div");
-    details.className = "format-details";
 
-    const label =
-      format.quality ||
-      format.resolution ||
-      format.format_note ||
-      format.ext ||
-      "Format " + (index + 1);
+  info.appendChild(name);
+  info.appendChild(details);
 
-    name.textContent = label;
 
-    details.textContent =
-      [
-        format.ext,
-        format.format_id
-          ? "ID: " + format.format_id
-          : "",
-        format.filesize
-          ? format.filesize
-          : "",
-        format.fps
-          ? format.fps + " FPS"
-          : ""
-      ]
-      .filter(Boolean)
-      .join(" • ");
+  const button =
+    document.createElement("button");
 
-    info.appendChild(name);
-    info.appendChild(details);
+  button.textContent = "Download";
 
-    const button =
-      document.createElement("button");
+  button.onclick = () =>
+    downloadFormat(choice.format);
 
-    button.textContent = "Download";
 
-    button.onclick = () =>
-      downloadFormat(format);
+  div.appendChild(info);
+  div.appendChild(button);
 
-    div.appendChild(info);
-    div.appendChild(button);
-
-    container.appendChild(div);
-  });
+  container.appendChild(div);
 }
+
 
 async function downloadFormat(format) {
 
@@ -330,46 +740,66 @@ async function downloadFormat(format) {
     format.format;
 
   if (!formatId) {
-    setStatus("This format has no format ID.");
+    setStatus(
+      "This format has no format ID."
+    );
     return;
   }
 
   setStatus("Starting download...");
 
+
   try {
 
-    const response = await fetch(
-      API_PROXY + "/download",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          url: videoUrl,
-          format_id: formatId
-        })
-      }
-    );
+    const response =
+      await fetch(
+        API_PROXY + "/download",
+        {
+          method: "POST",
 
-    const data = await response.json();
+          headers: {
+            "Content-Type":
+              "application/json"
+          },
+
+          body: JSON.stringify({
+            url: videoUrl,
+            format_id: formatId
+          })
+        }
+      );
+
+
+    const data =
+      await response.json();
+
 
     if (!response.ok) {
       throw new Error(
-        data.error || "Download failed."
+        data.error ||
+        "Download failed."
       );
     }
+
 
     const taskId =
       data.task_id ||
       data.id ||
       data.taskId;
 
+
     if (!taskId) {
 
       if (data.url) {
-        window.open(data.url, "_blank");
-        setStatus("Download link opened.");
+        window.open(
+          data.url,
+          "_blank"
+        );
+
+        setStatus(
+          "Download link opened."
+        );
+
         return;
       }
 
@@ -378,39 +808,53 @@ async function downloadFormat(format) {
       );
     }
 
+
     await monitor(taskId);
 
+
   } catch (error) {
+
     setStatus(
       "Download error:\n" +
-      (error.message || "Unknown error.")
+      (error.message ||
+      "Unknown error.")
     );
   }
 }
+
 
 async function monitor(taskId) {
 
   setStatus("Processing...");
 
+
   for (;;) {
 
     await new Promise(
-      resolve => setTimeout(resolve, 1500)
+      resolve =>
+        setTimeout(resolve, 1500)
     );
 
-    const response = await fetch(
-      API_PROXY +
-      "/status/" +
-      encodeURIComponent(taskId)
-    );
 
-    const data = await response.json();
+    const response =
+      await fetch(
+        API_PROXY +
+        "/status/" +
+        encodeURIComponent(taskId)
+      );
+
+
+    const data =
+      await response.json();
+
 
     if (!response.ok) {
       throw new Error(
-        data.error || "Status check failed."
+        data.error ||
+        "Status check failed."
       );
     }
+
 
     const status =
       String(
@@ -418,6 +862,7 @@ async function monitor(taskId) {
         data.state ||
         ""
       ).toLowerCase();
+
 
     if (
       status === "completed" ||
@@ -427,14 +872,20 @@ async function monitor(taskId) {
       data.url
     ) {
 
-      await finish(taskId, data);
+      await finish(
+        taskId,
+        data
+      );
+
       return;
     }
+
 
     if (
       status === "failed" ||
       status === "error"
     ) {
+
       throw new Error(
         data.error ||
         data.message ||
@@ -442,45 +893,69 @@ async function monitor(taskId) {
       );
     }
 
+
     setStatus(
       "Processing..." +
-      (data.progress != null
-        ? " " + data.progress + "%"
-        : "")
+      (
+        data.progress != null
+          ? " " + data.progress + "%"
+          : ""
+      )
     );
   }
 }
 
-async function finish(taskId, statusData) {
+
+async function finish(
+  taskId,
+  statusData
+) {
 
   const directUrl =
     statusData.download_url ||
     statusData.url;
 
+
   if (directUrl) {
-    window.open(directUrl, "_blank");
-    setStatus("Download link opened.");
+
+    window.open(
+      directUrl,
+      "_blank"
+    );
+
+    setStatus(
+      "Download link opened."
+    );
+
     return;
   }
 
-  const response = await fetch(
-    API_PROXY +
-    "/download/" +
-    encodeURIComponent(taskId)
-  );
 
-  const data = await response.json();
+  const response =
+    await fetch(
+      API_PROXY +
+      "/download/" +
+      encodeURIComponent(taskId)
+    );
+
+
+  const data =
+    await response.json();
+
 
   if (!response.ok) {
     throw new Error(
-      data.error || "Could not get download."
+      data.error ||
+      "Could not get download."
     );
   }
+
 
   const url =
     data.download_url ||
     data.url ||
     data.download;
+
 
   if (!url) {
     throw new Error(
@@ -488,11 +963,18 @@ async function finish(taskId, statusData) {
     );
   }
 
-  window.open(url, "_blank");
 
-  setStatus("Download link opened.");
+  window.open(
+    url,
+    "_blank"
+  );
+
+
+  setStatus(
+    "Download link opened."
+  );
 }
 </script>
 
 </body>
-</html>
+  </html>
